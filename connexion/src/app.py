@@ -1,12 +1,10 @@
-# app.py
 from flask import Flask, request, jsonify
-import random
-import smtplib
 import mysql.connector
+import bcrypt
 
 app = Flask(__name__)
 
-# Database connection
+# Connect to MySQL database
 db = mysql.connector.connect(
     host="127.0.0.1:3306",
     user="u303152537_NoyauConnexion",
@@ -15,48 +13,39 @@ db = mysql.connector.connect(
 )
 cursor = db.cursor()
 
-# Send OTP via email
-def send_otp_email(email, otp):
-    server = smtplib.SMTP('smtp.gmail.com', 587)
-    server.starttls()
-    server.login('your-email@gmail.com', 'your-password')
-    message = f'Subject: Your OTP\n\nYour OTP is {otp}'
-    server.sendmail('your-email@gmail.com', email, message)
-    server.quit()
-
-# Route to send OTP
-@app.route('/send-otp', methods=['POST'])
-def send_otp():
+# Route to handle user login
+@app.route('/login', methods=['POST'])
+def login():
     data = request.get_json()
     email = data['email']
-    
-    # Generate a random 6-digit OTP
-    otp = random.randint(100000, 999999)
+    password = data['password'].encode('utf-8')
 
-    # Save OTP and email to the database
-    cursor.execute("INSERT INTO otps (email, otp) VALUES (%s, %s)", (email, otp))
+    # Query the database to find the user
+    cursor.execute("SELECT * FROM users WHERE email = %s", (email,))
+    user = cursor.fetchone()
+
+    if user:
+        stored_password = user[2].encode('utf-8')  # Assumes the password is the 3rd field in users table
+        if bcrypt.checkpw(password, stored_password):
+            return jsonify({"message": "Login successful", "profile": {"name": user[1], "email": user[0]}}), 200
+        else:
+            return jsonify({"message": "Invalid password"}), 401
+    else:
+        return jsonify({"message": "User not found"}), 404
+
+# Route to handle user registration
+@app.route('/register', methods=['POST'])
+def register():
+    data = request.get_json()
+    email = data['email']
+    password = data['password'].encode('utf-8')
+    hashed_password = bcrypt.hashpw(password, bcrypt.gensalt())
+
+    # Insert the new user into the database
+    cursor.execute("INSERT INTO users (email, password) VALUES (%s, %s)", (email, hashed_password))
     db.commit()
 
-    # Send OTP to the user's email
-    send_otp_email(email, otp)
-
-    return jsonify({"message": "OTP sent successfully!"})
-
-# Route to verify OTP
-@app.route('/verify-otp', methods=['POST'])
-def verify_otp():
-    data = request.get_json()
-    email = data['email']
-    otp = data['otp']
-
-    # Verify OTP from the database
-    cursor.execute("SELECT otp FROM otps WHERE email=%s", (email,))
-    result = cursor.fetchone()
-
-    if result and str(result[0]) == otp:
-        return jsonify({"message": "OTP verified, login successful!"})
-    else:
-        return jsonify({"message": "Invalid OTP"}), 401
+    return jsonify({"message": "User registered successfully"}), 201
 
 if __name__ == '__main__':
     app.run(debug=True)
